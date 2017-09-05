@@ -52,41 +52,76 @@ class TaskSendDigest extends Command
 	
     protected function configure()
     {
-    	
         $this
             ->setName('digest')
             ->setDescription('Send notifications for daily digest')
+            ->addOption('show', null, InputOption::VALUE_NONE, 'Show sent digest')
+            ->addOption('daily', null, InputOption::VALUE_NONE, 'Send daily digest (default) for all modified tasks')
+            ->addOption('weekly', null, InputOption::VALUE_NONE, 'Send weekly digest (default) for all modified tasks')
         ;
     }
     
     protected function execute(InputInterface $input, OutputInterface $output)
     {
-        print "execute $input\n";
-        
 		$projects = $this->projectModel->getAllByStatus(ProjectModel::ACTIVE);
         foreach ($projects as $project) {
-        		$test = $this->projectMetadataModel->exists($project['id'], 'send_digest');
-        		$send_daily = $this->projectMetadataModel->get($project['id'], 'send_digest');
-        		
+        		$SendDailyDigest = $this->projectMetadataModel->exists($project['id'], 'send_digest');
+        		if ($SendDailyDigest) {
+        			$send_daily = $this->projectMetadataModel->get($project['id'], 'send_digest');
+        			if (strcasecmp($send_daily, "yes") != 0) {
+        				$SendDailyDigest = 0;	
+        			}
+        		}
+
+        		$SendWeeklyDigest = $this->projectMetadataModel->exists($project['id'], 'send_weekly_digest');
+        		if ($SendWeeklyDigest) {
+        			$send_weekly_digest = $this->projectMetadataModel->get($project['id'], 'send_weekly_digest');
+        			if (strcasecmp($send_weekly_digest, "yes") != 0) {
+        				$SendWeeklyDigest = 0;	
+        			}
+        		}
+        		        		
         		$project_id = $project['id'];
+
+        		// debug
         		$project_name = $project['name'];
-            	print "pr: $project_id, $project_name, $test, $send_daily\n";
+        		$wkly = $input->getOption('weekly');
+            	print "Project: $project_name, Daily: $SendDailyDigest, Weekly: $SendWeeklyDigest, weekly option: $wkly\n";
             	$users = $this->projectUserRoleModel->getUsers($project_id);
             	foreach ($users as $usr) {
             		$user_name = $this->helper->user->getFullname($usr);
             		print " User: $user_name\n";
             	}
+            	// end of debug
 
-            $tasks = $this->getModifiedTasksQuery($project_id)->findAll();
-            
-
-            	
-            	$tasks = $this->sendGroupOverdueTaskNotifications($tasks);
-            	$this->showTable($output, $tasks);
+        		if ($SendWeeklyDigest and ($input->getOption('weekly'))) {
+        			$lastWeek = time() - (7 * 24 * 60 * 60);
+        		    $tasks = $this->getModifiedTasksQuery($project_id, $lastWeek)->findAll();
+        		
+        		    if ($input->getOption('show')) {
+	            		$tasks = $this->sendGroupTaskNotifications($tasks, $project_id);
+            			print "Weekly digest\n";
+	            		$this->showTable($output, $tasks);
+	            	}
+        		}
+        		else {
+	        		if ($SendDailyDigest) {
+	        		    // defalut to daily
+	        			$yesterday = time() - (1 * 24 * 60 * 60);
+	        			$tasks = $this->getModifiedTasksQuery($project_id, $yesterday)->findAll();
+	
+	        		    if ($input->getOption('show')) {
+		            		//$tasks = $this->sendGroupTaskNotifications($tasks, $project_id);
+		            		$tasks = $this->sendTaskNotifications($tasks, $project_id);
+		            		print "Daily digest\n";
+		            		$this->showTable($output, $tasks);
+		            	}
+	        		}
+        		}
         }
     }
     
-    public function getModifiedTasksQuery($project_id)
+    public function getModifiedTasksQuery($project_id, $duration)
     {
     	return $this->db->table(TaskModel::TABLE)
     	->columns(
@@ -105,37 +140,9 @@ class TaskSendDigest extends Command
     	->eq(ProjectModel::TABLE.'.is_active', 1)
     	->eq(TaskModel::TABLE.'.is_active', 1)
     	->eq(TaskModel::TABLE.'.project_id', $project_id)
-    	->lte(TaskModel::TABLE.'.date_modification', time());
+    	->gte(TaskModel::TABLE.'.date_modification', $duration);
     }
-    
-
-    /*
-    protected function execute(InputInterface $input, OutputInterface $output)
-    {
-        if ($input->getOption('project')) {
-            $tasks = $this->taskFinderModel->getOverdueTasksQuery()
-                ->beginOr()
-                ->eq(TaskModel::TABLE.'.project_id', $input->getOption('project'))
-                ->eq(ProjectModel::TABLE.'.identifier', $input->getOption('project'))
-                ->closeOr()
-                ->findAll();
-        } else {
-            $tasks = $this->taskFinderModel->getOverdueTasks();
-        }
-
-        if ($input->getOption('group')) {
-            $tasks = $this->sendGroupOverdueTaskNotifications($tasks);
-        } elseif ($input->getOption('manager')) {
-            $tasks = $this->sendOverdueTaskNotificationsToManagers($tasks);
-        } else {
-            $tasks = $this->sendOverdueTaskNotifications($tasks);
-        }
-
-        if ($input->getOption('show')) {
-            $this->showTable($output, $tasks);
-        }
-    }
-*/
+   
     
     public function showTable(OutputInterface $output, array $tasks)
     {
@@ -160,19 +167,19 @@ class TaskSendDigest extends Command
     }
 
     /**
-     * Send all overdue tasks for one user in one email
+     * Send all modified project tasks for one user in one email
      *
      * @access public
      * @param  array $tasks
      * @return array
      */
-    public function sendGroupOverdueTaskNotifications(array $tasks)
+    public function sendGroupTaskNotifications(array $tasks, $project_id)
     {
         foreach ($this->groupByColumn($tasks, 'owner_id') as $user_tasks) {
             $users = $this->userNotificationModel->getUsersWithNotificationEnabled($user_tasks[0]['project_id']);
 
             foreach ($users as $user) {
-                $this->sendUserOverdueTaskNotifications($user, $user_tasks);
+                $this->sendUserTaskNotifications($user, $tasks);
             }
         }
 
@@ -180,14 +187,13 @@ class TaskSendDigest extends Command
     }
     
     /**
-     * Send all overdue tasks in one email to project manager(s)
+     * Send all tasks in one email to project manager(s)
      *
      * @access public
      * @param  array $tasks
      * @return array
      */
-    /*
-    public function sendOverdueTaskNotificationsToManagers(array $tasks)
+    public function sendTaskNotificationsToManagers(array $tasks)
     {
         foreach ($this->groupByColumn($tasks, 'project_id') as $project_id => $project_tasks) {
             $users = $this->userNotificationModel->getUsersWithNotificationEnabled($project_id);
@@ -201,27 +207,7 @@ class TaskSendDigest extends Command
             }
 
             foreach ($managers as $manager) {
-                $this->sendUserOverdueTaskNotificationsToManagers($manager, $project_tasks);
-            }
-        }
-
-        return $tasks;
-    }
-*/
-    /**
-     * Send overdue tasks
-     *
-     * @access public
-     * @param  array $tasks
-     * @return array
-     */
-    public function sendOverdueTaskNotifications(array $tasks)
-    {
-        foreach ($this->groupByColumn($tasks, 'project_id') as $project_id => $project_tasks) {
-            $users = $this->userNotificationModel->getUsersWithNotificationEnabled($project_id);
-
-            foreach ($users as $user) {
-                //$this->sendUserOverdueTaskNotifications($user, $project_tasks);
+                $this->sendUserTaskNotificationsToManagers($manager, $project_tasks);
             }
         }
 
@@ -229,15 +215,53 @@ class TaskSendDigest extends Command
     }
     
     /**
-     * Send overdue tasks for a given user
+     * Send tasks from project
+     *
+     * @access public
+     * @param  array $tasks
+     * @return array
+     */
+    public function sendTaskNotifications(array $tasks, $project_id)
+    {
+   		$users = $this->userNotificationModel->getUsersWithNotificationEnabled($project_id);
+    	
+   		foreach ($users as $user) {
+   			$this->sendUserTaskNotifications($user, $tasks);
+   		}
+    	
+    	return $tasks;
+    	 /*
+        foreach ($this->groupByColumn($tasks, 'project_id') as $project_id => $project_tasks) {
+            $users = $this->userNotificationModel->getUsersWithNotificationEnabled($project_id);
+
+            foreach ($users as $user) {
+                $this->sendUserTaskNotifications($user, $project_tasks);
+            }
+        }
+
+        return $tasks;
+        */
+    }
+    
+    /**
+     * Send tasks for a given user
      *
      * @access public
      * @param  array   $user
      * @param  array   $tasks
      */
-    /*
-    public function sendUserOverdueTaskNotifications(array $user, array $tasks)
+    public function sendUserTaskNotifications(array $user, array $tasks)
     {
+        $project_names = array();
+    	if (! empty($tasks)) {
+            $project_names[$task['project_id']] = $task['project_name'];
+    		$this->userNotificationModel->sendUserNotification(
+                $user,
+                TaskModel::EVENT_OVERDUE, //EVENT_UPDATE,
+                array('tasks' => $user_tasks, 'project_name' => implode(', ', $project_names))
+            );
+        }
+    	/*
         $user_tasks = array();
         $project_names = array();
 
@@ -251,29 +275,29 @@ class TaskSendDigest extends Command
         if (! empty($user_tasks)) {
             $this->userNotificationModel->sendUserNotification(
                 $user,
-                TaskModel::EVENT_OVERDUE,
+                TaskModel::EVENT_OVERDUE, //EVENT_UPDATE,
                 array('tasks' => $user_tasks, 'project_name' => implode(', ', $project_names))
             );
         }
+        */
     }
-*/
+
     /**
-     * Send overdue tasks for a project manager(s)
+     * Send tasks for a project manager(s)
      *
      * @access public
      * @param  array   $manager
      * @param  array   $tasks
      */
-    /*
-    public function sendUserOverdueTaskNotificationsToManagers(array $manager, array $tasks)
+    public function sendUserTaskNotificationsToManagers(array $manager, array $tasks)
     {
         $this->userNotificationModel->sendUserNotification(
             $manager,
-            TaskModel::EVENT_OVERDUE,
+            TaskModel::EVENT_UPDATE,
             array('tasks' => $tasks, 'project_name' => $tasks[0]['project_name'])
         );
     }
-*/
+
     /**
      * Group a collection of records by a column
      *

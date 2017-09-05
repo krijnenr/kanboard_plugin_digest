@@ -4,11 +4,8 @@ namespace Kanboard\Plugin\Digest;
 
 use Kanboard\Core\Plugin\Base;
 use Kanboard\Plugin\Digest\Command\TaskSendDigest;
-
 use Kanboard\Core\Translator;
 
-
-//class Plugin extends CommandProvider
 class Plugin extends Base
 {
     public function initialize()
@@ -24,7 +21,7 @@ class Plugin extends Base
     
    public function onStartup()
    {
-   	  	Translator::load($this->languageModel->getCurrentLanguage(), __DIR__.'/Locale');
+        Translator::load($this->languageModel->getCurrentLanguage(), __DIR__.'/Locale');
    }
     
     public function getPluginDescription() {
@@ -38,10 +35,11 @@ class Plugin extends Base
     public function getPluginVersion() {
         return '0.1.0.';
     }
-    /*
+    
     public function getCompatibleVersion()
     {
-    	return '>=1.0.44';
+    	/* developmend based on 1.45, should work with earlier versions (1.35?) */
+    	return '>=1.0.45';
     }
-    */
+    
 }

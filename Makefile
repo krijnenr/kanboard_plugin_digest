@@ -1,5 +1,5 @@
 plugin=digest
-version=0.0.1
+version=0.1.0
 
 all:
 	@ echo "Build archive for plugin ${plugin} version=${version}"

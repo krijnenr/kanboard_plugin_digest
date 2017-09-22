@@ -57,7 +57,7 @@ class TaskSendDigest extends Command
             ->setDescription('Send notifications for daily digest')
             ->addOption('show', null, InputOption::VALUE_NONE, 'Show sent digest')
             ->addOption('daily', null, InputOption::VALUE_NONE, 'Send daily digest (default) for all modified tasks')
-            ->addOption('weekly', null, InputOption::VALUE_NONE, 'Send weekly digest (default) for all modified tasks')
+            ->addOption('weekly', null, InputOption::VALUE_NONE, 'Send weekly digest for all modified tasks')
         ;
     }
     
@@ -97,24 +97,30 @@ class TaskSendDigest extends Command
         		if ($SendWeeklyDigest and ($input->getOption('weekly'))) {
         			$lastWeek = time() - (7 * 24 * 60 * 60);
         		    $tasks = $this->getModifiedTasksQuery($project_id, $lastWeek)->findAll();
-        		
+        		    
         		    if ($input->getOption('show')) {
-	            		$tasks = $this->sendGroupTaskNotifications($tasks, $project_id);
             			print "Weekly digest\n";
 	            		$this->showTable($output, $tasks);
+	            	}
+	            	if (!empty($tasks)) {
+        		    	#$tasks = $this->sendGroupTaskNotifications($tasks, $project_id);
+	            		$tasks = $this->sendTaskNotifications($tasks, $project_id);
 	            	}
         		}
         		else {
 	        		if ($SendDailyDigest) {
-	        		    // defalut to daily
+	        		    // default to daily
 	        			$yesterday = time() - (1 * 24 * 60 * 60);
 	        			$tasks = $this->getModifiedTasksQuery($project_id, $yesterday)->findAll();
 	
 	        		    if ($input->getOption('show')) {
-		            		//$tasks = $this->sendGroupTaskNotifications($tasks, $project_id);
-		            		$tasks = $this->sendTaskNotifications($tasks, $project_id);
 		            		print "Daily digest\n";
 		            		$this->showTable($output, $tasks);
+		            	}
+		            	
+		            	if (!empty($tasks)) {
+		            		//$tasks = $this->sendGroupTaskNotifications($tasks, $project_id);
+		            		$tasks = $this->sendTaskNotifications($tasks, $project_id);
 		            	}
 	        		}
         		}
@@ -223,11 +229,12 @@ class TaskSendDigest extends Command
      */
     public function sendTaskNotifications(array $tasks, $project_id)
     {
-   		$users = $this->userNotificationModel->getUsersWithNotificationEnabled($project_id);
-    	
-   		foreach ($users as $user) {
-   			$this->sendUserTaskNotifications($user, $tasks);
+   		if (empty($tasks)) {
+   			return $tasks;
    		}
+   		
+    	$users = $this->userNotificationModel->getUsersWithNotificationEnabled($project_id);
+		$this->sendUserTaskNotificationsToManagers($users, $tasks);
     	
     	return $tasks;
     	 /*
